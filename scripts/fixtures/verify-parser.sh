@@ -1,17 +1,47 @@
 #!/bin/bash
-# Parser + dry-run + lifecycle checks. Never calls the real grok binary for a
-# run: the two lifecycle drills use a fake GROK_BIN. Temp dirs are left under
-# /tmp for the OS to purge.
+# Parser + dry-run + lifecycle checks. Fully hermetic: every check runs against
+# a fake GROK_BIN built below, so the suite passes on a machine (or CI runner)
+# with no grok installed and never spends an API call. Paths are derived from
+# this file's own location — the suite tests the tree it lives in, wherever
+# that tree is. Temp dirs are left under the system temp dir for the OS to
+# purge.
 set -u
-S="/Users/yusifdarwish/.claude/skills/fabgrok/scripts/run-implementer.sh"
-SPEC="/Users/yusifdarwish/.claude/skills/fabgrok/scripts/fixtures/dry-spec.md"
-CWD="/Users/yusifdarwish/.claude/skills/fabgrok/scripts/fixtures"
+FIX_DIR="$(cd "$(dirname "$0")" && pwd)"
+S="$(cd "$FIX_DIR/../.." && pwd)/scripts/run-implementer.sh"
+SPEC="$FIX_DIR/dry-spec.md"
+CWD="$FIX_DIR"
 fails=0
+
+DRILL="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/fabgrok-drill.XXXXXX")"
+OUT="$DRILL/out.txt"
+ERR="$DRILL/err.txt"
+
+# Fakes first: even --dry-run runs preflight, which needs a grok that answers
+# `models`. Exporting the fast fake keeps the whole suite grok-free; the two
+# lifecycle drills override it per call.
+FAST="$DRILL/grok-fast"
+{
+  echo '#!/bin/bash'
+  echo 'if [ "${1:-}" = "models" ]; then echo "grok-4.6"; exit 0; fi'
+  echo 'echo "fake grok run"'
+  echo 'exit 0'
+} > "$FAST"
+/bin/chmod +x "$FAST"
+
+SLOW="$DRILL/grok-slow"
+{
+  echo '#!/bin/bash'
+  echo 'if [ "${1:-}" = "models" ]; then echo "grok-4.6"; exit 0; fi'
+  echo 'sleep 60'
+} > "$SLOW"
+/bin/chmod +x "$SLOW"
+
+export GROK_BIN="$FAST"
 
 check_bad() {
   local name="$1"
   shift
-  "$S" "$@" >"/tmp/fabgrok-verify-out.txt" 2>"/tmp/fabgrok-verify-err.txt"
+  "$S" "$@" >"$OUT" 2>"$ERR"
   local ec=$?
   if [ "$ec" -eq 2 ]; then
     echo "PASS reject $name (exit=2)"
@@ -25,22 +55,22 @@ check_dry() {
   local name="$1"
   local expect="$2"
   shift 2
-  "$S" --dry-run --spec "$SPEC" --cwd "$CWD" "$@" >"/tmp/fabgrok-verify-out.txt" 2>"/tmp/fabgrok-verify-err.txt"
+  "$S" --dry-run --spec "$SPEC" --cwd "$CWD" "$@" >"$OUT" 2>"$ERR"
   local ec=$?
   if [ "$ec" -ne 0 ]; then
     echo "FAIL dry $name (exit=$ec)"
-    /bin/cat /tmp/fabgrok-verify-err.txt
+    /bin/cat "$ERR"
     fails=$((fails + 1))
     return
   fi
-  if /usr/bin/grep -q -e "effort=$expect" /tmp/fabgrok-verify-out.txt && \
-     /usr/bin/grep -q -e "--effort $expect" /tmp/fabgrok-verify-out.txt && \
-     /usr/bin/grep -q -e "--model grok-4.6" /tmp/fabgrok-verify-out.txt && \
-     /usr/bin/grep -q -e "DRY-RUN OK" /tmp/fabgrok-verify-out.txt; then
+  if /usr/bin/grep -q -e "effort=$expect" "$OUT" && \
+     /usr/bin/grep -q -e "--effort $expect" "$OUT" && \
+     /usr/bin/grep -q -e "--model grok-4.6" "$OUT" && \
+     /usr/bin/grep -q -e "DRY-RUN OK" "$OUT"; then
     echo "PASS dry $name -> $expect"
   else
     echo "FAIL dry $name expected effort=$expect"
-    /bin/cat /tmp/fabgrok-verify-out.txt
+    /bin/cat "$OUT"
     fails=$((fails + 1))
   fi
 }
@@ -60,8 +90,8 @@ check_dry alias-extra-high xhigh --effort extra-high
 
 check_guards() {
   "$S" --dry-run --spec "$SPEC" --cwd "$CWD" --effort xhigh \
-    >"/tmp/fabgrok-verify-out.txt" 2>"/tmp/fabgrok-verify-err.txt"
-  if /usr/bin/grep -q -e '--sandbox workspace' /tmp/fabgrok-verify-out.txt; then
+    >"$OUT" 2>"$ERR"
+  if /usr/bin/grep -q -e '--sandbox workspace' "$OUT"; then
     echo "PASS sandbox flag on by default"
   else
     echo "FAIL sandbox flag missing"
@@ -70,8 +100,10 @@ check_guards() {
   local r
   # Publishing class + discarding class. Both must survive edits.
   for r in 'git push' 'git commit' 'git reset' 'git stash' 'git restore' \
-           'git checkout' 'git switch' 'git clean' 'rm -rf' 'sudo' 'curl' 'wget'; do
-    if /usr/bin/grep -q -e "--deny Bash($r" /tmp/fabgrok-verify-out.txt; then
+           'git checkout' 'git switch' 'git clean' \
+           'rm -rf' 'rm -fr' 'rm -R' 'rm -r ' 'rm -f -r' \
+           'sudo' 'curl' 'wget' 'gh ' 'ssh' 'scp' 'rsync'; do
+    if /usr/bin/grep -q -e "--deny Bash($r" "$OUT"; then
       echo "PASS deny rule: $r"
     else
       echo "FAIL deny rule missing: $r"
@@ -79,7 +111,7 @@ check_guards() {
     fi
   done
   # Session id must be pre-assigned so the resume handle exists before launch.
-  if /usr/bin/grep -q -e '--session-id' /tmp/fabgrok-verify-out.txt; then
+  if /usr/bin/grep -q -e '--session-id' "$OUT"; then
     echo "PASS session id pre-assigned"
   else
     echo "FAIL --session-id missing from pinned command"
@@ -89,8 +121,8 @@ check_guards() {
 
 check_sandbox_off() {
   FABGROK_SANDBOX=off "$S" --dry-run --spec "$SPEC" --cwd "$CWD" --effort xhigh \
-    >"/tmp/fabgrok-verify-out.txt" 2>"/tmp/fabgrok-verify-err.txt"
-  if /usr/bin/grep -q -e '--sandbox' /tmp/fabgrok-verify-out.txt; then
+    >"$OUT" 2>"$ERR"
+  if /usr/bin/grep -q -e '--sandbox' "$OUT"; then
     echo "FAIL FABGROK_SANDBOX=off still passed --sandbox"
     fails=$((fails + 1))
   else
@@ -98,8 +130,30 @@ check_sandbox_off() {
   fi
 }
 
+check_resume() {
+  # --resume must swap the pre-assigned --session-id for --resume <id>.
+  # The DRY-RUN dump spans many lines (the --rules arg embeds the contract),
+  # so grep the whole output — minus the "session:" header, which always
+  # echoes a "--resume <id>" hint and would make the first check vacuous.
+  "$S" --dry-run --spec "$SPEC" --cwd "$CWD" --effort xhigh --resume abc-123 \
+    >"$OUT" 2>"$ERR"
+  if /usr/bin/grep -v -e '^session:' "$OUT" | /usr/bin/grep -q -e '--resume abc-123'; then
+    echo "PASS resume flag passed through"
+  else
+    echo "FAIL --resume abc-123 missing from pinned command"
+    fails=$((fails + 1))
+  fi
+  if /usr/bin/grep -q -e '--session-id' "$OUT"; then
+    echo "FAIL resume run still pins --session-id"
+    fails=$((fails + 1))
+  else
+    echo "PASS resume run drops --session-id"
+  fi
+}
+
 check_guards
 check_sandbox_off
+check_resume
 
 if [ -d "$CWD/.fabgrok" ]; then
   echo "FAIL dry-run created $CWD/.fabgrok"
@@ -112,27 +166,6 @@ fi
 # Lifecycle drills. A meta.txt line that has never been demanded by a failing
 # check is indistinguishable from one that cannot be written.
 # ---------------------------------------------------------------------------
-
-DRILL="$(/usr/bin/mktemp -d /tmp/fabgrok-drill.XXXXXX)"
-
-# Fake grok: answers preflight's `models` probe, exits 0 fast as a run.
-FAST="$DRILL/grok-fast"
-{
-  echo '#!/bin/bash'
-  echo 'if [ "${1:-}" = "models" ]; then echo "grok-4.6"; exit 0; fi'
-  echo 'echo "fake grok run"'
-  echo 'exit 0'
-} > "$FAST"
-/bin/chmod +x "$FAST"
-
-# Fake grok that hangs, for the kill drill.
-SLOW="$DRILL/grok-slow"
-{
-  echo '#!/bin/bash'
-  echo 'if [ "${1:-}" = "models" ]; then echo "grok-4.6"; exit 0; fi'
-  echo 'sleep 60'
-} > "$SLOW"
-/bin/chmod +x "$SLOW"
 
 drill_assert() {
   local name="$1" cond="$2"

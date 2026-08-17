@@ -23,8 +23,13 @@ spec and another run.
 - **Sandbox** (macOS Seatbelt): Grok reads anywhere, writes only under the
   workspace, `/tmp`, and `~/.grok`.
 - **Deny rules** in two classes — *publishing* (`git push`, `git commit`,
-  `sudo`, `curl`, `wget`) and *discarding* (`git stash`, `restore`, `checkout`,
-  `switch`, `clean`, `reset`, `rm -rf`). Deny beats `--always-approve`.
+  `sudo`, `curl`, `wget`, `gh`, `ssh`, `scp`, `rsync`) and *discarding*
+  (`git stash`, `restore`, `checkout`, `switch`, `clean`, `reset`, recursive
+  `rm` in its common spellings). Deny beats `--always-approve`.
+- **Known limit**: deny rules match the text of Bash commands only. A Python
+  or Node script that opens a socket is not caught, and the sandbox limits
+  writes, not network. The rules brake accidents; they are not a wall against
+  a determined bypass.
 - **Honest refusals**: a spec item the implementer cannot verify is recorded
   under `COULD NOT`, never shipped as a check that cannot fail.
 - **Every run leaves a record** in `<cwd>/.fabgrok/runs/<stamp>/`: `meta.txt`
@@ -50,11 +55,22 @@ scripts/fixtures/             parser checks + lifecycle drills (no API calls)
 
 ## Install
 
-Copy or clone this directory to `~/.claude/skills/fabgrok`. Then verify:
-
 ```bash
-bash scripts/run-implementer.sh --preflight
-bash scripts/fixtures/verify-parser.sh
+git clone https://github.com/ydarwish1/fabgrok-skill ~/.claude/skills/fabgrok
 ```
 
-Both must end green (`PREFLIGHT OK`, `VERIFY PARSER OK`).
+The target folder name is load-bearing. It must be exactly `fabgrok`, matching
+the `name:` in SKILL.md's frontmatter — Claude Code silently ignores a skill
+whose folder and name disagree. A default clone creates `fabgrok-skill`, which
+would do exactly that.
+
+Then verify:
+
+```bash
+bash ~/.claude/skills/fabgrok/scripts/run-implementer.sh --preflight
+bash ~/.claude/skills/fabgrok/scripts/fixtures/verify-parser.sh
+```
+
+Both must end green (`PREFLIGHT OK`, `VERIFY PARSER OK`). The fixture suite is
+hermetic — it fakes the grok binary — so it passes before Grok Build is even
+installed. `--preflight` is the check that the real binary is ready.

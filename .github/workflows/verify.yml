@@ -1,0 +1,19 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax-check the launcher
+        run: bash -n scripts/run-implementer.sh
+      - name: Syntax-check the fixture suite
+        run: bash -n scripts/fixtures/verify-parser.sh
+      # Hermetic: verify-parser.sh builds its own fake grok binary,
+      # so no Grok Build install or API key is needed here.
+      - name: Run the fixture suite
+        run: bash scripts/fixtures/verify-parser.sh

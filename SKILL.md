@@ -80,11 +80,14 @@ Code's redline-guard hook never sees its commands — these are the only brake):
   under `--cwd`, `/tmp`, and `~/.grok`. Override with `FABGROK_SANDBOX=<profile>`
   or `FABGROK_SANDBOX=off`; profiles are `workspace`, `read-only`, `strict`.
 - `--deny` rules in two classes: **publishing** (`git push`, `git commit`,
-  `sudo`, `curl`, `wget`) and **discarding** (`git stash`, `restore`,
-  `checkout`, `switch`, `clean`, `reset` in all forms, `rm -rf`). The discard
+  `sudo`, `curl`, `wget`, `gh`, `ssh`, `scp`, `rsync`) and **discarding**
+  (`git stash`, `restore`, `checkout`, `switch`, `clean`, `reset` in all
+  forms, recursive `rm` in its common spellings). The discard
   class exists because lanes may sit uncommitted in a shared tree — one stash
   would erase them all (2026-08-17, six lanes). Deny beats `--always-approve`
-  (proven 2026-08-16 with both controls). If a build genuinely needs one, edit
+  (proven 2026-08-16 with both controls). The rules match Bash command TEXT
+  only — a python/node script that opens a socket is not caught; they brake
+  accidents, not a determined bypass. If a build genuinely needs one, edit
   `DENY_RULES` at the top of the script and say so in the report.
 
 A run that dies on a denied command is the guard working. Do not disable a rule

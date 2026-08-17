@@ -18,11 +18,17 @@ SANDBOX="${FABGROK_SANDBOX:-workspace}"
 
 # Deny rules: two threat classes. Deny beats --always-approve.
 #  1. Publishing — nothing leaves the machine or lands in history:
-#     push, commit, sudo, curl, wget.
+#     push, commit, sudo, curl, wget, gh (PRs/releases/API writes), ssh,
+#     scp, rsync.
 #  2. Discarding — nothing throws away the working tree. Lanes may sit
 #     UNCOMMITTED in a shared tree; one stash/checkout/clean would erase them
 #     all (hand-written into every spec until 2026-08-17, now enforced here).
 #     "git reset*" covers --hard plus --merge/--keep, which also move files.
+#     Recursive rm is denied in its common spellings (-rf, -fr, -R, "-r ",
+#     "-f -r") — text matching cannot cover every flag ordering.
+# Limit: these rules match the TEXT of Bash commands only. A python/node
+# script that opens a socket is not caught, and the sandbox limits writes,
+# not network. Treat the list as a brake on accidents, not a wall.
 # A run dying on a denied command is the guard working. If a build genuinely
 # needs one, edit this list and say so in the report.
 DENY_RULES=(
@@ -35,9 +41,17 @@ DENY_RULES=(
   "Bash(git switch*)"
   "Bash(git clean*)"
   "Bash(rm -rf*)"
+  "Bash(rm -fr*)"
+  "Bash(rm -R*)"
+  "Bash(rm -r *)"
+  "Bash(rm -f -r*)"
   "Bash(sudo*)"
   "Bash(curl*)"
   "Bash(wget*)"
+  "Bash(gh *)"
+  "Bash(ssh*)"
+  "Bash(scp*)"
+  "Bash(rsync*)"
 )
 
 usage() {
